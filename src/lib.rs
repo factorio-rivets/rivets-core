@@ -1,18 +1,29 @@
 #![feature(once_cell_try)]
 
+use anyhow::{bail, Result};
 use std::collections::HashMap;
+use std::ffi::CStr;
 use std::ffi::CString;
 use std::fs::File;
 use std::path::Path;
 use std::sync::OnceLock;
-use anyhow:: {bail, Result};
+use windows::core::PCSTR;
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 
 use pdb::FallibleIterator;
 use pdb::PDB;
 use rivets::detour;
 use rivets::Opaque;
-use rivets::AsPcstr;
+
+pub trait AsPcstr {
+    fn as_pcstr(&self) -> PCSTR;
+}
+
+impl AsPcstr for CStr {
+    fn as_pcstr(&self) -> PCSTR {
+        PCSTR(self.as_ptr().cast())
+    }
+}
 
 static PDB_CACHE: OnceLock<PDBCache> = OnceLock::new();
 
@@ -59,9 +70,7 @@ impl PDBCache {
     }
 
     unsafe fn get(factorio_path: &Path) -> Result<&'static Self> {
-        PDB_CACHE.get_or_try_init(|| {
-            Self::new(&factorio_path.join("factorio.pdb"), "factorio.exe")
-        })
+        PDB_CACHE.get_or_try_init(|| Self::new(&factorio_path.join("factorio.pdb"), "factorio.exe"))
     }
 
     fn get_function_address(&self, function_name: &str) -> Option<u64> {
@@ -81,16 +90,19 @@ impl PDBCache {
 }
 
 /// Injects a detour into a Factorio compiled function.
-/// 
+///
 /// # Arguments
 /// * `factorio_path` - The path to the Factorio binary directory.
 /// * `function_name` - The name of the function to inject the detour into.
 /// * `hook` - The detour function to inject.
-/// 
+///
 /// # Safety
 /// This function is unsafe because it uses the Windows API.
 /// Do not call this function in a threaded context.
-unsafe fn inject(function_name: &str, hook: unsafe fn(u64) -> Result<(), rivets::retour::Error>) -> Result<()> {
+unsafe fn inject(
+    function_name: &str,
+    hook: unsafe fn(u64) -> Result<(), rivets::retour::Error>,
+) -> Result<()> {
     let factorio_path = std::path::Path::new("C:/Users/zacha/Documents/factorio/bin");
 
     let Some(address) = PDBCache::get(factorio_path)?.get_function_address(function_name) else {
