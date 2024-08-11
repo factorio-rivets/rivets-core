@@ -1,10 +1,18 @@
 [package]
-name = "[internal-mod-name]"
+name = "rivets-factorio-mod"
 version = "0.0.0"
 edition = "2021"
 
 [dependencies]
-rivets = { git = "https://github.com/factorio-rivets/rivets" }
+rivets = { git = "https://github.com/factorio-rivets/rivets-crate" }
+anyhow = "1.0.86"
+ctor = "0.2.8"
+pdb = "0.8.0"
+windows = { version = "0.58", features = [
+    "Win32",
+    "Win32_System",
+    "Win32_System_LibraryLoader",
+] }
 
 [lib]
 crate-type = ["dylib"]
