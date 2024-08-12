@@ -1,22 +1,16 @@
 #![feature(once_cell_try)]
 
-use abi_stable::std_types::RBoxError;
-use abi_stable::std_types::RResult;
-use abi_stable::std_types::RString;
-use abi_stable::std_types::RVec;
-use abi_stable::StableAbi;
 use anyhow::{bail, Result};
 use libloading::Library;
 use mod_util::mod_list::ModList;
 use mod_util::mod_loader::ModError;
 use pdb::FallibleIterator;
 use pdb::PDB;
+use rivets::RivetsHook;
 use std::collections::HashMap;
-use std::ffi::CStr;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::fs::File;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use windows::core::PCSTR;
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
@@ -161,19 +155,6 @@ fn extract_all_mods_libs(
     }
 
     Ok(result)
-}
-
-#[repr(C)]
-#[derive(StableAbi)]
-pub struct RivetsHook {
-    mangled_name: RString,
-    hook: unsafe extern "C" fn(u64) -> RResult<(), RBoxError>,
-}
-
-#[repr(C)]
-#[derive(StableAbi)]
-pub struct RivetsInitializeABI {
-    pub get_hooks: extern "C" fn() -> RVec<RivetsHook>,
 }
 
 type GetRivetsInitializeABI = extern "C" fn() -> *const RivetsInitializeABI;
