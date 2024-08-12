@@ -100,7 +100,6 @@ impl PDBCache {
 /// This function is unsafe because it uses the Windows API.
 /// Do not call this function in a threaded context.
 unsafe fn inject(hook: &RivetsHook) -> Result<()> {
-    // todo: remove pub
     let factorio_path = std::path::Path::new("C:/Users/zacha/Documents/factorio/bin");
 
     let Some(address) =
