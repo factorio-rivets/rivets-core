@@ -1,11 +1,12 @@
 #![feature(once_cell_try)]
 
-use abi_stable::sabi_extern_fn;
 use abi_stable::std_types::RBoxError;
 use abi_stable::std_types::RResult;
-use abi_stable::std_types::RStr;
+use abi_stable::std_types::RString;
+use abi_stable::std_types::RVec;
 use abi_stable::StableAbi;
 use anyhow::{bail, Result};
+use libloading::Library;
 use mod_util::mod_list::ModList;
 use mod_util::mod_loader::ModError;
 use pdb::FallibleIterator;
@@ -19,18 +20,6 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use windows::core::PCSTR;
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
-
-#[repr(C)]
-#[derive(StableAbi)]
-pub struct RivetsHook {
-    hook: unsafe extern "C" fn(u64) -> RResult<(), RBoxError>,
-}
-
-#[repr(C)]
-#[derive(StableAbi)]
-pub struct RivetsLib {
-    pub inject: unsafe extern "C" fn(RStr, RivetsHook) -> RResult<(), RBoxError>,
-}
 
 trait AsPcstr {
     fn as_pcstr(&self) -> PCSTR;
@@ -106,27 +95,6 @@ impl PDBCache {
     }
 }
 
-fn string_to_rresult<T>(string: String) -> RResult<T, RBoxError> {
-    #[derive(Debug)]
-    struct Error {
-        message: String,
-    }
-
-    impl std::fmt::Display for Error {
-        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            write!(f, "{}", &self.message)
-        }
-    }
-
-    impl std::error::Error for Error {
-        fn description(&self) -> &str {
-            &self.message
-        }
-    }
-
-    Err(RBoxError::new(Error { message: string })).into()
-}
-
 /// Injects a detour into a Factorio compiled function.
 ///
 /// # Arguments
@@ -137,23 +105,19 @@ fn string_to_rresult<T>(string: String) -> RResult<T, RBoxError> {
 /// # Safety
 /// This function is unsafe because it uses the Windows API.
 /// Do not call this function in a threaded context.
-#[sabi_extern_fn]
-#[must_use]
-pub unsafe extern "C" fn inject(function_name: RStr, hook: RivetsHook) -> RResult<(), RBoxError> {
+unsafe fn inject(hook: &RivetsHook) -> Result<()> {
     // todo: remove pub
     let factorio_path = std::path::Path::new("C:/Users/zacha/Documents/factorio/bin");
 
-    let addr = match PDBCache::get(factorio_path) {
-        Ok(addr) => addr,
-        Err(e) => return string_to_rresult(e.to_string()),
+    let Some(address) =
+        PDBCache::get(factorio_path)?.get_function_address(hook.mangled_name.as_str())
+    else {
+        bail!("Failed to find {} address", hook.mangled_name);
     };
-
-    let Some(address) = addr.get_function_address(function_name.as_str()) else {
-        return string_to_rresult(format!("Failed to find {function_name} address"));
-    };
-    println!("{function_name} address: {address:#x}");
 
     (hook.hook)(address)
+        .into_result()
+        .map_err(std::convert::Into::into)
 }
 
 fn extract_all_mods_libs(
@@ -178,7 +142,6 @@ fn extract_all_mods_libs(
             .get(&factorio_mod_name)
             .expect("The list of active mods contains all mods in the load order");
 
-
         let lib = match factorio_mod.get_file(RIVETS_LIB) {
             Err(ModError::PathDoesNotExist(_)) => continue,
             Ok(lib) => lib,
@@ -188,7 +151,10 @@ fn extract_all_mods_libs(
         std::fs::create_dir_all(write_data.as_ref().join("temp/rivets"))?;
 
         let extracted_lib_name = format!("{factorio_mod_name}{DYNAMIC_LIBRARY_SUFFIX}");
-        let lib_path = write_data.as_ref().join("temp/rivets").join(extracted_lib_name);
+        let lib_path = write_data
+            .as_ref()
+            .join("temp/rivets")
+            .join(extracted_lib_name);
         std::fs::write(&lib_path, lib)?;
 
         result.push(lib_path);
@@ -197,20 +163,46 @@ fn extract_all_mods_libs(
     Ok(result)
 }
 
+#[repr(C)]
+#[derive(StableAbi)]
+pub struct RivetsHook {
+    mangled_name: RString,
+    hook: unsafe extern "C" fn(u64) -> RResult<(), RBoxError>,
+}
+
+#[repr(C)]
+#[derive(StableAbi)]
+pub struct RivetsInitializeABI {
+    pub get_hooks: extern "C" fn() -> RVec<RivetsHook>,
+}
+
+type GetRivetsInitializeABI = extern "C" fn() -> *const RivetsInitializeABI;
+
+unsafe fn main(read_path: PathBuf, write_path: PathBuf) -> Result<()> {
+    for dll_so_file in extract_all_mods_libs(read_path, write_path)? {
+        let dll_so_file = Library::new(dll_so_file)?;
+
+        let rivets_initialize_abi: libloading::Symbol<GetRivetsInitializeABI> =
+            dll_so_file.get(b"rivets_initalize\0")?;
+        let rivets_initialize_abi = &*rivets_initialize_abi();
+
+        let hooks = (rivets_initialize_abi.get_hooks)();
+
+        for hook in hooks {
+            inject(&hook)?;
+        }
+    }
+    Ok(())
+}
+
 // todo: could this be replaced by abi_stable to make it cross platform?
 // todo: realistically, this should return a RRResult<(), RBoxError> however I was lazy.
 // currently it returns Option<String> where the String repersents an error message
 dll_syringe::payload_procedure! {
-    fn main(read_path: PathBuf, write_path: PathBuf) -> Option<String> {
-        println!("Rivets initialized!");
-        let libs = match extract_all_mods_libs(read_path, write_path) {
-            Ok(libs) => libs,
-            Err(e) => return Some(format!("Failed to extract mods: {e}")),
-        };
-        let mut err = String::new();
-        for lib in libs {
-            err.push_str(&format!("Injecting {lib:?}..."));
+    fn payload_procedure(read_path: PathBuf, write_path: PathBuf) -> Option<String> {
+        match unsafe { main(read_path, write_path) } {
+            Ok(()) => None,
+            Err(e) => Some(e.to_string()),
         }
-        Some(err)
     }
 }
