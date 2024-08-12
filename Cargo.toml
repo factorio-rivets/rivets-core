@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 rivets = { git = "https://github.com/factorio-rivets/rivets-crate" }
 anyhow = "1.0"
-ctor = "0.2"
 pdb = "0.8"
 windows = { version = "0.58", features = [
     "Win32",

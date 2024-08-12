@@ -156,10 +156,10 @@ pub unsafe extern "C" fn inject(function_name: RStr, hook: RivetsHook) -> RResul
 
 // todo: could this be replaced by abi_stable to make it cross platform?
 // todo: realistically, this should return a RRResult<(), RBoxError> however I was lazy.
-// currently it returns Option<String> where the String repersenets an error message
+// currently it returns Option<String> where the String repersents an error message
 dll_syringe::payload_procedure! {
     fn main(read_path: PathBuf, write_path: PathBuf) -> Option<String> {
         println!("Rivets initialized!");
-        None
+        Some(format!("qqqq {read_path:?} {write_path:?}"))
     }
 }
