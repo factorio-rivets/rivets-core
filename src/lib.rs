@@ -157,13 +157,11 @@ fn extract_all_mods_libs(
     Ok(result)
 }
 
-type GetRivetsInitializeABI = extern "C" fn() -> *const RivetsInitializeABI;
-
 unsafe fn main(read_path: PathBuf, write_path: PathBuf) -> Result<()> {
     for dll_so_file in extract_all_mods_libs(read_path, write_path)? {
         let dll_so_file = Library::new(dll_so_file)?;
 
-        let rivets_initialize_abi: libloading::Symbol<GetRivetsInitializeABI> =
+        let rivets_initialize_abi: libloading::Symbol<extern "C" fn() -> *const rivets::RivetsInitializeABI> =
             dll_so_file.get(b"rivets_initalize\0")?;
         let rivets_initialize_abi = &*rivets_initialize_abi();
 
