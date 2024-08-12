@@ -14,6 +14,7 @@ windows = { version = "0.58", features = [
 ] }
 abi_stable = "0.11"
 dll-syringe = { version = "0.15", features = ["full"] }
+mod_util = { git = "https://github.com/fgardt/factorio-scanner" }
 
 [lib]
 crate-type = ["dylib"]

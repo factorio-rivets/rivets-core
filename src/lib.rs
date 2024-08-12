@@ -6,6 +6,10 @@ use abi_stable::std_types::RResult;
 use abi_stable::std_types::RStr;
 use abi_stable::StableAbi;
 use anyhow::{bail, Result};
+use mod_util::mod_list::ModList;
+use mod_util::mod_loader::ModError;
+use pdb::FallibleIterator;
+use pdb::PDB;
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::ffi::CString;
@@ -15,9 +19,6 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use windows::core::PCSTR;
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
-
-use pdb::FallibleIterator;
-use pdb::PDB;
 
 #[repr(C)]
 #[derive(StableAbi)]
@@ -138,7 +139,8 @@ fn string_to_rresult<T>(string: String) -> RResult<T, RBoxError> {
 /// Do not call this function in a threaded context.
 #[sabi_extern_fn]
 #[must_use]
-pub unsafe extern "C" fn inject(function_name: RStr, hook: RivetsHook) -> RResult<(), RBoxError> { // todo: remove pub
+pub unsafe extern "C" fn inject(function_name: RStr, hook: RivetsHook) -> RResult<(), RBoxError> {
+    // todo: remove pub
     let factorio_path = std::path::Path::new("C:/Users/zacha/Documents/factorio/bin");
 
     let addr = match PDBCache::get(factorio_path) {
@@ -154,12 +156,61 @@ pub unsafe extern "C" fn inject(function_name: RStr, hook: RivetsHook) -> RResul
     (hook.hook)(address)
 }
 
+fn extract_all_mods_libs(
+    read_data: impl AsRef<Path>,
+    write_data: impl AsRef<Path>,
+) -> Result<Vec<PathBuf>> {
+    #[cfg(target_os = "linux")]
+    static DYNAMIC_LIBRARY_SUFFIX: &str = ".so";
+    #[cfg(target_os = "linux")]
+    static RIVETS_LIB: &str = "rivets.so";
+    #[cfg(target_os = "windows")]
+    static DYNAMIC_LIBRARY_SUFFIX: &str = ".dll";
+    #[cfg(target_os = "windows")]
+    static RIVETS_LIB: &str = "rivets.dll";
+
+    let mut result = vec![];
+    let mod_list = ModList::generate_custom(read_data, &write_data)?;
+
+    let (all_active_mods, mod_load_order) = mod_list.active_with_order();
+    for factorio_mod_name in mod_load_order {
+        let factorio_mod = all_active_mods
+            .get(&factorio_mod_name)
+            .expect("The list of active mods contains all mods in the load order");
+
+
+        let lib = match factorio_mod.get_file(RIVETS_LIB) {
+            Err(ModError::PathDoesNotExist(_)) => continue,
+            Ok(lib) => lib,
+            Err(e) => return Err(e.into()),
+        };
+
+        std::fs::create_dir_all(write_data.as_ref().join("temp/rivets"))?;
+
+        let extracted_lib_name = format!("{factorio_mod_name}{DYNAMIC_LIBRARY_SUFFIX}");
+        let lib_path = write_data.as_ref().join("temp/rivets").join(extracted_lib_name);
+        std::fs::write(&lib_path, lib)?;
+
+        result.push(lib_path);
+    }
+
+    Ok(result)
+}
+
 // todo: could this be replaced by abi_stable to make it cross platform?
 // todo: realistically, this should return a RRResult<(), RBoxError> however I was lazy.
 // currently it returns Option<String> where the String repersents an error message
 dll_syringe::payload_procedure! {
     fn main(read_path: PathBuf, write_path: PathBuf) -> Option<String> {
         println!("Rivets initialized!");
-        Some(format!("qqqq {read_path:?} {write_path:?}"))
+        let libs = match extract_all_mods_libs(read_path, write_path) {
+            Ok(libs) => libs,
+            Err(e) => return Some(format!("Failed to extract mods: {e}")),
+        };
+        let mut err = String::new();
+        for lib in libs {
+            err.push_str(&format!("Injecting {lib:?}..."));
+        }
+        Some(err)
     }
 }
