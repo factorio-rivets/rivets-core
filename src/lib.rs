@@ -1,21 +1,37 @@
 #![feature(once_cell_try)]
 
+use abi_stable::sabi_extern_fn;
+use abi_stable::std_types::RBoxError;
+use abi_stable::std_types::RResult;
+use abi_stable::std_types::RStr;
+use abi_stable::StableAbi;
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::fs::File;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 use windows::core::PCSTR;
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 
 use pdb::FallibleIterator;
 use pdb::PDB;
-use rivets::detour;
-use rivets::Opaque;
 
-pub trait AsPcstr {
+#[repr(C)]
+#[derive(StableAbi)]
+pub struct RivetsHook {
+    hook: unsafe extern "C" fn(u64) -> RResult<(), RBoxError>,
+}
+
+#[repr(C)]
+#[derive(StableAbi)]
+pub struct RivetsLib {
+    pub inject: unsafe extern "C" fn(RStr, RivetsHook) -> RResult<(), RBoxError>,
+}
+
+trait AsPcstr {
     fn as_pcstr(&self) -> PCSTR;
 }
 
@@ -89,6 +105,27 @@ impl PDBCache {
     }
 }
 
+fn string_to_rresult<T>(string: String) -> RResult<T, RBoxError> {
+    #[derive(Debug)]
+    struct Error {
+        message: String,
+    }
+
+    impl std::fmt::Display for Error {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "{}", &self.message)
+        }
+    }
+
+    impl std::error::Error for Error {
+        fn description(&self) -> &str {
+            &self.message
+        }
+    }
+
+    Err(RBoxError::new(Error { message: string })).into()
+}
+
 /// Injects a detour into a Factorio compiled function.
 ///
 /// # Arguments
@@ -99,24 +136,30 @@ impl PDBCache {
 /// # Safety
 /// This function is unsafe because it uses the Windows API.
 /// Do not call this function in a threaded context.
-unsafe fn inject(
-    function_name: &str,
-    hook: unsafe fn(u64) -> Result<(), rivets::retour::Error>,
-) -> Result<()> {
+#[sabi_extern_fn]
+#[must_use]
+pub unsafe extern "C" fn inject(function_name: RStr, hook: RivetsHook) -> RResult<(), RBoxError> { // todo: remove pub
     let factorio_path = std::path::Path::new("C:/Users/zacha/Documents/factorio/bin");
 
-    let Some(address) = PDBCache::get(factorio_path)?.get_function_address(function_name) else {
-        bail!("Failed to find {function_name} address");
+    let addr = match PDBCache::get(factorio_path) {
+        Ok(addr) => addr,
+        Err(e) => return string_to_rresult(e.to_string()),
+    };
+
+    let Some(address) = addr.get_function_address(function_name.as_str()) else {
+        return string_to_rresult(format!("Failed to find {function_name} address"));
     };
     println!("{function_name} address: {address:#x}");
 
-    unsafe { Ok(hook(address)?) }
+    (hook.hook)(address)
 }
 
-#[detour(?valid@LuaSurface@@UEBA_NXZ)]
-fn valid(this: Opaque) -> bool {
-    println!("Hello from LuaSurface::valid!");
-    unsafe { back(this) }
+// todo: could this be replaced by abi_stable to make it cross platform?
+// todo: realistically, this should return a RRResult<(), RBoxError> however I was lazy.
+// currently it returns Option<String> where the String repersenets an error message
+dll_syringe::payload_procedure! {
+    fn main(read_path: PathBuf, write_path: PathBuf) -> Option<String> {
+        println!("Rivets initialized!");
+        None
+    }
 }
-
-rivets::_finalize!();

@@ -5,14 +5,16 @@ edition = "2021"
 
 [dependencies]
 rivets = { git = "https://github.com/factorio-rivets/rivets-crate" }
-anyhow = "1.0.86"
-ctor = "0.2.8"
-pdb = "0.8.0"
+anyhow = "1.0"
+ctor = "0.2"
+pdb = "0.8"
 windows = { version = "0.58", features = [
     "Win32",
     "Win32_System",
     "Win32_System_LibraryLoader",
 ] }
+abi_stable = "0.11"
+dll-syringe = { version = "0.15", features = ["full"] }
 
 [lib]
 crate-type = ["dylib"]
