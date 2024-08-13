@@ -163,11 +163,11 @@ unsafe fn main(read_path: PathBuf, write_path: PathBuf) -> Result<()> {
     for dll_so_file in extract_all_mods_libs(read_path, write_path)? {
         let dll_so_file = Library::new(dll_so_file)?;
 
-        let rivets_entry_point: libloading::Symbol<ABIWrapper> =
-            dll_so_file.get(b"rivets_entry_point\0")?;
-        let rivets_entry_point = &*rivets_entry_point();
+        let rivets_finalize_abi: libloading::Symbol<ABIWrapper> =
+            dll_so_file.get(b"rivets_finalize\0")?;
+        let rivets_finalize_abi = &*rivets_finalize_abi();
 
-        let hooks = (rivets_entry_point.get_hooks)();
+        let hooks = (rivets_finalize_abi.get_hooks)();
 
         for hook in hooks {
             inject(&hook)?;
