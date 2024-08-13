@@ -131,12 +131,12 @@ fn extract_all_mods_libs(
     mod_list.load();
 
     let (all_active_mods, mod_load_order) = mod_list.active_with_order();
-    for factorio_mod_name in mod_load_order {
-        let factorio_mod = all_active_mods
-            .get(&factorio_mod_name)
+    for mod_name in mod_load_order {
+        let current_mod = all_active_mods
+            .get(&mod_name)
             .expect("The list of active mods contains all mods in the load order");
 
-        let lib = match factorio_mod.get_file(RIVETS_LIB) {
+        let lib = match current_mod.get_file(RIVETS_LIB) {
             Err(ModError::PathDoesNotExist(_)) => continue,
             Ok(lib) => lib,
             Err(e) => return Err(e.into()),
@@ -144,7 +144,7 @@ fn extract_all_mods_libs(
 
         std::fs::create_dir_all(write_data.as_ref().join("temp/rivets"))?;
 
-        let extracted_lib_name = format!("{factorio_mod_name}{DYNAMIC_LIBRARY_SUFFIX}");
+        let extracted_lib_name = format!("{mod_name}{DYNAMIC_LIBRARY_SUFFIX}");
         let lib_path = write_data
             .as_ref()
             .join("temp/rivets")
