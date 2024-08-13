@@ -1,6 +1,6 @@
 #![feature(once_cell_try)]
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Result, Context};
 use libloading::Library;
 use mod_util::mod_list::ModList;
 use mod_util::mod_loader::ModError;
@@ -100,10 +100,9 @@ impl PDBCache {
 /// This function is unsafe because it uses the Windows API.
 /// Do not call this function in a threaded context.
 unsafe fn inject(pdb_path: impl AsRef<Path>, hook: &RivetsHook) -> Result<()> {
-    let Some(address) =
-        PDBCache::get(pdb_path)?.get_function_address(hook.mangled_name.as_str())
+    let Some(address) = PDBCache::get(pdb_path)?.get_function_address(hook.mangled_name.as_str())
     else {
-        bail!("Failed to find {} address", hook.mangled_name);
+        bail!("Failed to find address for the following mangled function inside the PDB: {}", hook.mangled_name);
     };
 
     (hook.hook)(address)
@@ -114,7 +113,7 @@ unsafe fn inject(pdb_path: impl AsRef<Path>, hook: &RivetsHook) -> Result<()> {
 fn extract_all_mods_libs(
     read_data: impl AsRef<Path>,
     write_data: impl AsRef<Path>,
-) -> Result<Vec<PathBuf>> {
+) -> Result<Vec<(String, PathBuf)>> {
     #[cfg(target_os = "linux")]
     static DYNAMIC_LIBRARY_SUFFIX: &str = ".so";
     #[cfg(target_os = "linux")]
@@ -125,17 +124,26 @@ fn extract_all_mods_libs(
     static RIVETS_LIB: &str = "rivets.dll";
 
     let mut result = vec![];
-    let mut mod_list = ModList::generate_custom(read_data, &write_data)?;
+    let mut mod_list = ModList::generate_custom(&read_data, &write_data)?;
     mod_list.load()?;
 
     let (all_active_mods, mod_load_order) = mod_list.active_with_order();
     for mod_name in mod_load_order {
+        if mod_name == "rivets" {
+            continue;
+        }
+
         let current_mod = all_active_mods
             .get(&mod_name)
             .expect("The list of active mods contains all mods in the load order");
 
         let lib = match current_mod.get_file(RIVETS_LIB) {
             Err(ModError::PathDoesNotExist(_)) => continue,
+            Err(ModError::ZipError(e))
+                if e.to_string() == "specified file not found in archive" =>
+            {
+                continue
+            }
             Ok(lib) => lib,
             Err(e) => return Err(e.into()),
         };
@@ -149,21 +157,30 @@ fn extract_all_mods_libs(
             .join(extracted_lib_name);
         std::fs::write(&lib_path, lib)?;
 
-        result.push(lib_path);
+        result.push((mod_name, lib_path));
     }
 
     Ok(result)
 }
 
+// todo: this is duplicate code. move to rivets rs
+fn get_bin_folder() -> Result<PathBuf> {
+    std::env::current_exe()?
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| anyhow::anyhow!("Failed to get binary folder"))
+}
+
 unsafe fn main(read_path: PathBuf, write_path: PathBuf) -> Result<()> {
     type ABIWrapper = extern "C" fn() -> *const rivets::RivetsFinalizeABI;
-    let pdb_path = read_path.join("factorio.pdb");
+    let pdb_path = get_bin_folder()?.join("factorio.pdb");
 
-    for dll_so_file in extract_all_mods_libs(read_path, write_path)? {
+    for (mod_name, dll_so_file) in extract_all_mods_libs(read_path, write_path)? {
         let dll_so_file = Library::new(dll_so_file)?;
 
+        let err_msg = format!("Failed to get rivets_finalize ABI function for mod {mod_name}. Did you forget to call rivets::finalize!()?");
         let rivets_finalize_abi: libloading::Symbol<ABIWrapper> =
-            dll_so_file.get(b"rivets_finalize\0")?;
+            dll_so_file.get(b"rivets_finalize\0").context(err_msg)?;
         let rivets_finalize_abi = &*rivets_finalize_abi();
 
         let hooks = (rivets_finalize_abi.get_hooks)();
@@ -179,7 +196,7 @@ unsafe fn main(read_path: PathBuf, write_path: PathBuf) -> Result<()> {
 // todo: realistically, this should return a RRResult<(), RBoxError> however I was lazy.
 // currently it returns Option<String> where the String repersents an error message
 dll_syringe::payload_procedure! {
-    fn payload_procedure(read_path: PathBuf, write_path: PathBuf) -> Option<String> {
+    fn rivetslib_setup(read_path: PathBuf, write_path: PathBuf) -> Option<String> {
         match unsafe { main(read_path, write_path) } {
             Ok(()) => None,
             Err(e) => Some(e.to_string()),
