@@ -42,7 +42,7 @@ impl PDBCache {
     /// # Safety
     /// This function is unsafe because it uses the Windows API.
     /// Do not call this function in a threaded context.
-    unsafe fn new(pdb_path: &Path, module_name: &str) -> Result<Self> {
+    unsafe fn new(pdb_path: impl AsRef<Path>, module_name: &str) -> Result<Self> {
         let file = File::open(pdb_path)?;
         let mut pdb = PDB::open(file)?;
         let base_address = Self::get_dll_base_address(module_name)?;
@@ -69,8 +69,8 @@ impl PDBCache {
         })
     }
 
-    unsafe fn get(factorio_path: &Path) -> Result<&'static Self> {
-        PDB_CACHE.get_or_try_init(|| Self::new(&factorio_path.join("factorio.pdb"), "factorio.exe"))
+    unsafe fn get(pdb_path: impl AsRef<Path>) -> Result<&'static Self> {
+        PDB_CACHE.get_or_try_init(|| Self::new(pdb_path, "factorio.exe"))
     }
 
     fn get_function_address(&self, function_name: &str) -> Option<u64> {
@@ -99,11 +99,9 @@ impl PDBCache {
 /// # Safety
 /// This function is unsafe because it uses the Windows API.
 /// Do not call this function in a threaded context.
-unsafe fn inject(hook: &RivetsHook) -> Result<()> {
-    let factorio_path = std::path::Path::new("C:/Users/zacha/Documents/factorio/bin");
-
+unsafe fn inject(pdb_path: impl AsRef<Path>, hook: &RivetsHook) -> Result<()> {
     let Some(address) =
-        PDBCache::get(factorio_path)?.get_function_address(hook.mangled_name.as_str())
+        PDBCache::get(pdb_path)?.get_function_address(hook.mangled_name.as_str())
     else {
         bail!("Failed to find {} address", hook.mangled_name);
     };
@@ -159,6 +157,7 @@ fn extract_all_mods_libs(
 
 unsafe fn main(read_path: PathBuf, write_path: PathBuf) -> Result<()> {
     type ABIWrapper = extern "C" fn() -> *const rivets::RivetsFinalizeABI;
+    let pdb_path = read_path.join("factorio.pdb");
 
     for dll_so_file in extract_all_mods_libs(read_path, write_path)? {
         let dll_so_file = Library::new(dll_so_file)?;
@@ -170,7 +169,7 @@ unsafe fn main(read_path: PathBuf, write_path: PathBuf) -> Result<()> {
         let hooks = (rivets_finalize_abi.get_hooks)();
 
         for hook in hooks {
-            inject(&hook)?;
+            inject(&pdb_path, &hook)?;
         }
     }
     Ok(())
