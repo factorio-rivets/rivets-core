@@ -4,7 +4,7 @@ version = "0.0.0"
 edition = "2021"
 
 [dependencies]
-rivets = { git = "https://github.com/factorio-rivets/rivets-crate" }
+rivets = { git = "https://github.com/factorio-rivets/rivets-rs" }
 anyhow = "1.0.86"
 ctor = "0.2.8"
 pdb = "0.8.0"
