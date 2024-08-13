@@ -128,7 +128,7 @@ fn extract_all_mods_libs(
 
     let mut result = vec![];
     let mut mod_list = ModList::generate_custom(read_data, &write_data)?;
-    mod_list.load();
+    mod_list.load()?;
 
     let (all_active_mods, mod_load_order) = mod_list.active_with_order();
     for mod_name in mod_load_order {
@@ -163,11 +163,11 @@ unsafe fn main(read_path: PathBuf, write_path: PathBuf) -> Result<()> {
     for dll_so_file in extract_all_mods_libs(read_path, write_path)? {
         let dll_so_file = Library::new(dll_so_file)?;
 
-        let rivets_finalize_abi: libloading::Symbol<ABIWrapper> =
-            dll_so_file.get(b"rivets_finalize\0")?;
-        let rivets_finalize_abi = &*rivets_finalize_abi();
+        let rivets_entry_point: libloading::Symbol<ABIWrapper> =
+            dll_so_file.get(b"rivets_entry_point\0")?;
+        let rivets_entry_point = &*rivets_entry_point();
 
-        let hooks = (rivets_finalize_abi.get_hooks)();
+        let hooks = (rivets_entry_point.get_hooks)();
 
         for hook in hooks {
             inject(&hook)?;
