@@ -127,7 +127,8 @@ fn extract_all_mods_libs(
     static RIVETS_LIB: &str = "rivets.dll";
 
     let mut result = vec![];
-    let mod_list = ModList::generate_custom(read_data, &write_data)?;
+    let mut mod_list = ModList::generate_custom(read_data, &write_data)?;
+    mod_list.load();
 
     let (all_active_mods, mod_load_order) = mod_list.active_with_order();
     for factorio_mod_name in mod_load_order {
