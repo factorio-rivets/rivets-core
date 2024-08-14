@@ -1,5 +1,4 @@
-#![feature(once_cell_try)]
-
+use abi_stable::std_types::RVec;
 use anyhow::{bail, Result, Context};
 use libloading::Library;
 use mod_util::mod_list::ModList;
@@ -11,7 +10,6 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use windows::core::PCSTR;
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 
@@ -24,8 +22,6 @@ impl AsPcstr for CStr {
         PCSTR(self.as_ptr().cast())
     }
 }
-
-static PDB_CACHE: OnceLock<PDBCache> = OnceLock::new();
 
 struct PDBCache {
     symbol_addresses: HashMap<String, u32>,
@@ -69,10 +65,6 @@ impl PDBCache {
         })
     }
 
-    unsafe fn get(pdb_path: impl AsRef<Path>) -> Result<&'static Self> {
-        PDB_CACHE.get_or_try_init(|| Self::new(pdb_path, "factorio.exe"))
-    }
-
     fn get_function_address(&self, function_name: &str) -> Option<u64> {
         self.symbol_addresses
             .get(function_name)
@@ -87,27 +79,26 @@ impl PDBCache {
             Err(err) => bail!(err),
         }
     }
-}
 
-/// Injects a detour into a Factorio compiled function.
-///
-/// # Arguments
-/// * `factorio_path` - The path to the Factorio binary directory.
-/// * `function_name` - The name of the function to inject the detour into.
-/// * `hook` - The detour function to inject.
-///
-/// # Safety
-/// This function is unsafe because it uses the Windows API.
-/// Do not call this function in a threaded context.
-unsafe fn inject(pdb_path: impl AsRef<Path>, hook: &RivetsHook) -> Result<()> {
-    let Some(address) = PDBCache::get(pdb_path)?.get_function_address(hook.mangled_name.as_str())
-    else {
-        bail!("Failed to find address for the following mangled function inside the PDB: {}", hook.mangled_name);
-    };
+    /// Injects a detour into a Factorio compiled function.
+    ///
+    /// # Arguments
+    /// * `factorio_path` - The path to the Factorio binary directory.
+    /// * `function_name` - The name of the function to inject the detour into.
+    /// * `hook` - The detour function to inject.
+    /// 
+    /// # Safety
+    /// todo!
+    unsafe fn inject(&self, hook: &RivetsHook) -> Result<()> {
+        let Some(address) = self.get_function_address(hook.mangled_name.as_str())
+        else {
+            bail!("Failed to find address for the following mangled function inside the PDB: {}", hook.mangled_name);
+        };
 
-    (hook.hook)(address)
-        .into_result()
-        .map_err(std::convert::Into::into)
+        (hook.hook)(address)
+            .into_result()
+            .map_err(std::convert::Into::into)
+    }
 }
 
 fn extract_all_mods_libs(
@@ -172,21 +163,18 @@ fn get_bin_folder() -> Result<PathBuf> {
 }
 
 unsafe fn main(read_path: PathBuf, write_path: PathBuf) -> Result<()> {
-    type ABIWrapper = extern "C" fn() -> *const rivets::RivetsFinalizeABI;
     let pdb_path = get_bin_folder()?.join("factorio.pdb");
+    let pdb_cache = PDBCache::new(pdb_path, "factorio.exe")?;
 
     for (mod_name, dll_so_file) in extract_all_mods_libs(read_path, write_path)? {
         let dll_so_file = Library::new(dll_so_file)?;
 
         let err_msg = format!("Failed to get rivets_finalize ABI function for mod {mod_name}. Did you forget to call rivets::finalize!()?");
-        let rivets_finalize_abi: libloading::Symbol<ABIWrapper> =
+        let get_hooks: libloading::Symbol<extern "C" fn() -> RVec<rivets::RivetsHook>> =
             dll_so_file.get(b"rivets_finalize\0").context(err_msg)?;
-        let rivets_finalize_abi = &*rivets_finalize_abi();
 
-        let hooks = (rivets_finalize_abi.get_hooks)();
-
-        for hook in hooks {
-            inject(&pdb_path, &hook)?;
+        for hook in get_hooks() {
+            pdb_cache.inject(&hook)?;
         }
     }
     Ok(())
