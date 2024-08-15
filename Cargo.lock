@@ -1224,9 +1224,7 @@ dependencies = [
  "dll-syringe",
  "libloading 0.8.5",
  "mod_util",
- "pdb",
  "rivets",
- "windows",
 ]
 
 [[package]]
@@ -1247,9 +1245,13 @@ name = "rivets-shared"
 version = "0.1.0"
 dependencies = [
  "abi_stable",
+ "anyhow",
  "cpp_demangle",
+ "pdb",
+ "serde",
  "syn 2.0.74",
  "undname",
+ "windows",
 ]
 
 [[package]]
