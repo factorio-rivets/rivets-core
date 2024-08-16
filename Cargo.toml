@@ -5,10 +5,6 @@ edition = "2021"
 
 [dependencies]
 rivets = { git = "https://github.com/factorio-rivets/rivets-rs" }
-anyhow = "1.0"
-dll-syringe = { version = "0.15", features = ["full"] }
-mod_util = { git = "https://github.com/fgardt/factorio-scanner" }
-libloading = "0.8"
 
 [lib]
 crate-type = ["dylib"]
